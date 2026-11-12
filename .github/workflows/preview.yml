@@ -1,0 +1,59 @@
+# Plan morning-digest § 3 and § 4. Builds the preview of /digest/2026-10-28 on the runner and
+# deploys it to GitHub Pages, so the preview never lands in the repo (ADR 0003).
+# Run with marker=true for review, then again with marker=false to take the marker off the same link.
+name: preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      marker:
+        description: "Show the lane marker (true for review, false for clean-up)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install -g pnpm@12.18.0
+      - run: pnpm install --frozen-lockfile
+
+      - name: Save /digest/2026-10-28 as one HTML file
+        env:
+          # Empty string = marker unset: the banner reads "no marker set".
+          LANE_MARKER: ${{ inputs.marker && secrets.LANE_MARKER || '' }}
+          PORT: 8787
+        run: |
+          pnpm start > rig.log 2>&1 &
+          for i in $(seq 1 30); do curl -fs localhost:8787/health > /dev/null && break; sleep 1; done
+          mkdir -p _site
+          curl -fsS localhost:8787/digest/2026-10-28 -o _site/digest-2026-10-28.html
+          if [ -n "$LANE_MARKER" ]; then
+            grep -qF "$LANE_MARKER" _site/digest-2026-10-28.html
+          else
+            grep -qF "no marker set" _site/digest-2026-10-28.html
+          fi
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+          retention-days: 1
+      - id: deployment
+        uses: actions/deploy-pages@v4
